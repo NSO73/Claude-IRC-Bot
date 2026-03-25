@@ -1,0 +1,15 @@
+{
+  "name": "claude-irc-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.83",
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^16.4.7",
+    "irc-framework": "^4.14.0"
+  }
+}

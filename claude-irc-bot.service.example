@@ -1,0 +1,21 @@
+[Unit]
+Description=Claude IRC Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/claude-irc-bot
+ExecStart=/usr/bin/node src/index.js
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindPaths=/home/YOUR_USER/claude-irc-bot
+PrivateTmp=true
+NoNewPrivileges=true
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/YOUR_USER/claude-irc-bot/.env
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,29 @@
+{
+  "lang": "en",
+  "irc": {
+    "host": "irc.libera.chat",
+    "port": 6697,
+    "tls": true,
+    "nick": "MyBot",
+    "username": "mybot",
+    "gecos": "MyBot - Claude IRC Bot",
+    "channel": "#yourchannel",
+    "autoReconnect": true,
+    "autoReconnectMaxRetries": 10,
+    "autoReconnectWait": 5000,
+    "floodDelay": 1000
+  },
+  "claude": {
+    "model": "sonnet",
+    "maxConcurrentPerUser": 3,
+    "queryTimeout": 300000
+  },
+  "auth": {
+    "allowedNicks": ["yournick"],
+    "requireIdentified": true,
+    "denyMessage": ""
+  },
+  "paste": {
+    "threshold": 20
+  }
+}
