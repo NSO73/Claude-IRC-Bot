@@ -6,3 +6,4 @@ projects/
 claude-irc-bot.service
 CLAUDE.md
 .claude-mem/
+__pycache__/
