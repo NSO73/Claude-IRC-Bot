@@ -5,9 +5,10 @@ import { splitMessage } from './irc/splitter.js';
 import { handleIrcCommand, isIrcCommand, getHelp } from './irc/commands.js';
 import { isValidProjectName, listProjects, ensureProject, deleteProject, getProjectPrompt, setProjectPrompt } from './services/sessions.js';
 import { searchYoutube, extractVideoIds, getVideoInfo } from './services/youtube.js';
-import { hasPlan, getPlan, createPlan, updatePlan, cancelPlan, pushContext, formatPlan, isGoMessage } from './services/plan.js';
+import { getPlan, createPlan, updatePlan, cancelPlan, pushContext, formatPlan, isGoMessage } from './services/plan.js';
 import { updateSeen, getPendingTells, closeMemory } from './services/memory.js';
 import { createPaste } from './services/paste.js';
+import { buildUiPrompt, publishPrototype, isUiEnabled } from './services/ui.js';
 import { buildConnectOpts } from './irc/client.js';
 import { t } from './lang/index.js';
 
@@ -20,10 +21,6 @@ export function setupBot(client, config) {
 
   function delay(ms) {
     return new Promise(r => setTimeout(r, ms));
-  }
-
-  function claudeConfig(modelOverride) {
-    return { ...config.claude, model: modelOverride || config.claude.model };
   }
 
   function pendingNotice(target, taskId) {
@@ -56,7 +53,7 @@ export function setupBot(client, config) {
       if (err.message === 'Cancelled' || err.name === 'AbortError') {
         client.say(target, t('taskAborted', { id: taskId }));
       } else {
-        console.error('Claude error:', err.message);
+        console.error('Claude error:', err);
         client.say(target, t('error', { msg: err.message.slice(0, 100) }));
       }
       return null;
@@ -65,11 +62,11 @@ export function setupBot(client, config) {
     }
   }
 
-  async function sendReply(target, lines, { paste = false } = {}) {
-    const arr = Array.isArray(lines) ? lines : splitMessage(lines);
+  async function sendReply(target, text, { paste = false } = {}) {
+    const raw = Array.isArray(text) ? text.join('\n') : text;
+    const arr = splitMessage(raw);
     const threshold = config.paste?.threshold;
     if (paste && threshold && arr.length > threshold) {
-      const raw = Array.isArray(lines) ? lines.join('\n') : lines;
       try {
         const url = await createPaste(raw);
         client.say(target, url);
@@ -85,9 +82,7 @@ export function setupBot(client, config) {
   }
 
   async function requireAuth(nick, target) {
-    const result = await checkAuth(
-      client, nick, config.auth.allowedNicks, config.auth.requireIdentified
-    );
+    const result = await checkAuth(client, nick);
     if (!result.authorized) {
       if (config.auth.denyMessage) client.say(target, config.auth.denyMessage);
       console.log(`Auth denied for ${nick}: ${result.reason}`);
@@ -97,16 +92,20 @@ export function setupBot(client, config) {
 
   // --- Claude handlers ---
 
-  async function handleClaude(nick, target, question, { modelOverride, taskPrefix = '!c' } = {}) {
+  async function handleClaude(nick, target, question, { modelOverride, taskPrefix = '!c', maxTurns } = {}) {
     const projectName = activeProjects.get(nick);
-    const cfg = claudeConfig(modelOverride);
+    const model = modelOverride || config.claude.model;
     const cwd = projectName ? ensureProject(projectName) : undefined;
 
     const desc = projectName
       ? `[${projectName}] ${taskPrefix} ${question.slice(0, 40)}`
       : `${taskPrefix} ${question.slice(0, 50)}`;
 
-    const reply = await withTask(nick, target, desc, () => ask(question, cfg, [], { cwd, queryTimeout: config.claude.queryTimeout }));
+    const askOpts = {};
+    if (cwd) askOpts.cwd = cwd;
+    if (maxTurns) askOpts.maxTurns = maxTurns;
+
+    const reply = await withTask(nick, target, desc, () => ask(question, model, [], askOpts));
     if (reply === null) return null;
     if (!reply) { client.say(target, t('emptyReply')); return null; }
 
@@ -119,12 +118,11 @@ export function setupBot(client, config) {
     const plan = getPlan(nick);
     if (!plan) return;
 
-    pushContext(nick, 'user', feedback);
-    const cfg = claudeConfig('opus');
-    const reply = await withTask(nick, target, 'plan: feedback', () => ask(feedback, cfg, plan.context, { queryTimeout: config.claude.queryTimeout }));
+    const reply = await withTask(nick, target, 'plan: feedback', () => ask(feedback, 'opus', plan.context));
     if (reply === null) return;
     if (!reply) { client.say(target, t('emptyReply')); return; }
 
+    pushContext(nick, 'user', feedback);
     pushContext(nick, 'assistant', reply);
     updatePlan(nick, reply);
     await sendReply(target, reply, { paste: true });
@@ -138,14 +136,11 @@ export function setupBot(client, config) {
       return;
     }
 
-    const execPrompt = `Le plan a été validé. Exécute-le maintenant de façon concise (style IRC). Voici le plan final :\n\n${plan.plan}`;
-    pushContext(nick, 'user', execPrompt);
-
-    const cfg = claudeConfig('opus');
+    const execPrompt = t('planSystemExec', { plan: plan.plan });
     const projectName = activeProjects.get(nick);
     const cwd = projectName ? ensureProject(projectName) : undefined;
 
-    const reply = await withTask(nick, target, 'plan: exécution', () => ask(execPrompt, cfg, plan.context, { cwd, queryTimeout: config.claude.queryTimeout }));
+    const reply = await withTask(nick, target, 'plan: exécution', () => ask(execPrompt, 'opus', plan.context, { cwd }));
     if (reply === null) return;
     if (!reply) { client.say(target, t('emptyReply')); return; }
 
@@ -206,7 +201,7 @@ export function setupBot(client, config) {
       return;
     }
     if (args === '/go') {
-      if (!hasPlan(nick)) { client.say(target, t('planNone')); return; }
+      if (!getPlan(nick)) { client.say(target, t('planNone')); return; }
       await handleExecutePlan(nick, target);
       return;
     }
@@ -214,15 +209,14 @@ export function setupBot(client, config) {
       client.say(target, t('planUsage'));
       return;
     }
-    if (hasPlan(nick)) {
+    if (getPlan(nick)) {
       client.say(target, t('planAlreadyActive'));
       return;
     }
 
-    const planPrompt = `L'utilisateur veut un plan d'approche. Propose un plan clair et structuré pour répondre à sa demande. Inclus les grandes étapes, les choix d'architecture ou d'outils si pertinent, et les compromis éventuels. Ne commence pas l'exécution, propose seulement le plan. Question : ${args}`;
-    const cfg = claudeConfig('opus');
+    const planPrompt = t('planSystemPropose', { question: args });
 
-    const reply = await withTask(nick, target, `!plan ${args.slice(0, 50)}`, () => ask(planPrompt, cfg, [], { queryTimeout: config.claude.queryTimeout }));
+    const reply = await withTask(nick, target, `!plan ${args.slice(0, 50)}`, () => ask(planPrompt, 'opus', []));
     if (reply === null) return;
 
     createPlan(nick, args, reply);
@@ -232,7 +226,7 @@ export function setupBot(client, config) {
 
   function cmdStop(nick, target, args) {
     const id = parseInt(args, 10);
-    if (!id) { client.say(target, t('stopUsage')); return; }
+    if (isNaN(id)) { client.say(target, t('stopUsage')); return; }
     const task = cancelTask(id);
     if (!task) {
       client.say(target, t('taskNotFound', { id }));
@@ -283,7 +277,9 @@ export function setupBot(client, config) {
       const current = activeProjects.get(nick);
       if (!current) { client.say(target, t('projectNone')); return; }
       const prompt = getProjectPrompt(current);
-      if (prompt !== null) await sendReply(target, prompt);
+      if (prompt === null) { client.say(target, t('projectNotFound', { name: current })); return; }
+      if (!prompt) { client.say(target, t('projectMdEmpty', { name: current })); return; }
+      await sendReply(target, prompt);
       return;
     }
 
@@ -311,6 +307,7 @@ export function setupBot(client, config) {
     if (rest === '/md') {
       const prompt = getProjectPrompt(projectName);
       if (prompt === null) { client.say(target, t('projectNotFound', { name: projectName })); return; }
+      if (!prompt) { client.say(target, t('projectMdEmpty', { name: projectName })); return; }
       await sendReply(target, prompt);
       return;
     }
@@ -328,14 +325,29 @@ export function setupBot(client, config) {
 
     ensureProject(projectName);
     activeProjects.set(nick, projectName);
-
-    if (!rest) {
-      client.say(target, t('projectActive', { name: projectName }));
-      return;
-    }
-
     client.say(target, t('projectActive', { name: projectName }));
-    await handleClaude(nick, target, rest);
+    if (rest) await handleClaude(nick, target, rest);
+  }
+
+  async function cmdUi(nick, target, args) {
+    if (!isUiEnabled()) { client.say(target, t('error', { msg: 'UI service not available' })); return; }
+    if (!args) { client.say(target, t('uiUsage')); return; }
+
+    const prompt = buildUiPrompt(args);
+
+    const reply = await withTask(nick, target, `!ui ${args.slice(0, 50)}`, () =>
+      ask(prompt, 'opus', [], { queryTimeout: config.claude.uiTimeout || 1200_000, tools: [], maxTurns: 1, skipPlugins: true })
+    );
+    if (reply === null) return;
+    if (!reply) { client.say(target, t('emptyReply')); return; }
+
+    try {
+      const url = await publishPrototype(reply);
+      client.say(target, url);
+    } catch (err) {
+      console.error('UI save error:', err.message);
+      client.say(target, t('error', { msg: err.message.slice(0, 100) }));
+    }
   }
 
   // --- Command routing ---
@@ -346,11 +358,12 @@ export function setupBot(client, config) {
     yt: cmdYoutube,
     tasks: cmdTasks,
     plan: cmdPlan,
-    c: (nick, target, args) => args && handleClaude(nick, target, args),
-    cc: (nick, target, args) => args && handleClaude(nick, target, args, { modelOverride: 'opus', taskPrefix: '!cc' }),
+    c: (nick, target, args) => args ? handleClaude(nick, target, args) : client.say(target, t('cUsage')),
+    cc: (nick, target, args) => args ? handleClaude(nick, target, args, { modelOverride: 'opus', taskPrefix: '!cc', maxTurns: 10 }) : client.say(target, t('ccUsage')),
     stop: cmdStop,
     restart: cmdRestart,
     project: cmdProject,
+    ui: cmdUi,
   };
 
   // --- IRC events ---
@@ -369,6 +382,13 @@ export function setupBot(client, config) {
     if (event.new_nick === client.user.nick) updateNickPattern(event.new_nick);
   });
 
+  client.on('kick', (event) => {
+    if (event.kicked === client.user.nick) {
+      console.log(`Kicked from ${event.channel} by ${event.nick}: ${event.message || ''}`);
+      if (!shuttingDown) setTimeout(() => client.join(event.channel), 5000);
+    }
+  });
+
   client.on('privmsg', async (event) => {
     const { target, nick } = event;
     const message = event.message.trim();
@@ -380,7 +400,7 @@ export function setupBot(client, config) {
     }
 
     // Plan mode interception
-    if (!message.startsWith('!') && hasPlan(nick)) {
+    if (!message.startsWith('!') && getPlan(nick)) {
       if (!(await requireAuth(nick, target)).authorized) return;
       if (isGoMessage(message)) await handleExecutePlan(nick, target);
       else await handleRefinePlan(nick, target, message);
@@ -400,7 +420,7 @@ export function setupBot(client, config) {
     // Auto-detect YouTube links (parallel fetch, silent auth — no deny message)
     if (!message.startsWith('!')) {
       const ytIds = extractVideoIds(message);
-      const silentAuth = ytIds.length > 0 && (await checkAuth(client, nick, config.auth.allowedNicks, config.auth.requireIdentified)).authorized;
+      const silentAuth = ytIds.length > 0 && (await checkAuth(client, nick)).authorized;
       if (silentAuth) {
         const results = await Promise.allSettled(ytIds.map(id => getVideoInfo(id)));
         for (const r of results) {
@@ -420,8 +440,9 @@ export function setupBot(client, config) {
     const command = (spaceIdx === -1 ? message : message.slice(0, spaceIdx)).slice(1).toLowerCase();
     const args = spaceIdx === -1 ? '' : message.slice(spaceIdx + 1).trim();
 
-    // IRC commands
+    // IRC commands (channel only — ignore in DMs)
     if (isIrcCommand(command)) {
+      if (!target.startsWith('#')) return;
       if (!(await requireAuth(nick, target)).authorized) return;
       const result = handleIrcCommand(client, target, nick, command, args);
       if (result) client.say(target, result);
@@ -471,7 +492,7 @@ export function setupBot(client, config) {
     closeMemory();
     client.once('close', () => process.exit(0));
     client.quit(reason);
-    setTimeout(() => process.exit(0), 5000);
+    setTimeout(() => process.exit(0), 5000).unref();
   }
 
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

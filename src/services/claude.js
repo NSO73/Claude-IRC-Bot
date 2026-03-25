@@ -1,6 +1,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { t } from '../lang/index.js';
 
 const MODEL_ALIASES = {
   opus: 'claude-opus-4-6',
@@ -22,37 +24,56 @@ function parseModel(question, defaultModel) {
 }
 
 const DEFAULT_QUERY_TIMEOUT_MS = 300000; // 5 minutes
+let defaultTimeout = DEFAULT_QUERY_TIMEOUT_MS;
+
+export function initClaude(claudeConfig) {
+  defaultTimeout = claudeConfig.queryTimeout || DEFAULT_QUERY_TIMEOUT_MS;
+  if (!existsSync(CLAUDE_MEM_PATH)) {
+    console.warn(`claude-mem plugin not found at ${CLAUDE_MEM_PATH}`);
+  }
+}
 
 function spawnQuery(prompt, model, opts = {}) {
   const ac = new AbortController();
-  const timeout = opts.queryTimeout || DEFAULT_QUERY_TIMEOUT_MS;
+  const timeout = opts.queryTimeout || defaultTimeout;
   const timer = setTimeout(() => ac.abort(), timeout);
+
+  const plugins = opts.skipPlugins
+    ? (opts.plugins || [])
+    : [{ type: 'local', path: CLAUDE_MEM_PATH }, ...(opts.plugins || [])];
 
   const sdkOpts = {
     model,
     abortController: ac,
     cwd: opts.cwd || process.cwd(),
-    plugins: [
-      { type: 'local', path: CLAUDE_MEM_PATH },
-      ...(opts.plugins || []),
-    ],
+    plugins,
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
-    persistSession: true,
-    maxTurns: opts.maxTurns || 3,
+    persistSession: !opts.skipPlugins,
+    maxTurns: opts.maxTurns || 5,
+    ...(opts.tools != null && { tools: opts.tools }),
   };
 
   const promise = (async () => {
     try {
-      let result = '';
+      const parts = [];
+      const t0 = Date.now();
       for await (const message of query({ prompt, options: sdkOpts })) {
+        if (message.type === 'system') console.log(`[claude] init +${Date.now() - t0}ms`);
+        if (message.type === 'result') console.log(`[claude] done +${Date.now() - t0}ms turns=${message.num_turns} cost=$${message.total_cost_usd} error=${message.is_error}`);
         if (message.type === 'assistant') {
-          for (const block of message.message?.content || []) {
-            if (block.type === 'text') result += block.text;
+          const blocks = message.message?.content || [];
+          const types = blocks.map(b => b.type).join(',');
+          console.log(`[claude] assistant +${Date.now() - t0}ms blocks=${types}`);
+          for (const block of blocks) {
+            if (block.type === 'text') parts.push(block.text);
+            if (opts.captureWrites && block.type === 'tool_use' && block.name === 'Write' && block.input?.content) {
+              parts.push(block.input.content);
+            }
           }
         }
       }
-      return result.trim();
+      return parts.join('').trim();
     } finally {
       clearTimeout(timer);
     }
@@ -61,21 +82,18 @@ function spawnQuery(prompt, model, opts = {}) {
   return { promise, abort: () => { clearTimeout(timer); ac.abort(); } };
 }
 
-export function ask(question, claudeConfig, contextMessages = [], opts = {}) {
-  const { model, question: q } = parseModel(question, claudeConfig.model);
+export function ask(question, model, contextMessages = [], opts = {}) {
+  const { model: resolved, question: q } = parseModel(question, model);
 
   let prompt = q;
   if (contextMessages.length > 0) {
+    const userLabel = t('contextLabelUser');
+    const assistantLabel = t('contextLabelAssistant');
     const history = contextMessages
-      .map(m => `${m.role === 'user' ? 'Utilisateur' : 'Assistant'}: ${m.content}`)
+      .map(m => `${m.role === 'user' ? userLabel : assistantLabel}: ${m.content}`)
       .join('\n\n');
-    prompt = `${history}\n\nUtilisateur: ${q}`;
+    prompt = `${history}\n\n${userLabel}: ${q}`;
   }
 
-  return spawnQuery(prompt, model, {
-    cwd: opts.cwd,
-    plugins: opts.plugins,
-    maxTurns: opts.maxTurns,
-    queryTimeout: opts.queryTimeout,
-  });
+  return spawnQuery(prompt, resolved, opts);
 }

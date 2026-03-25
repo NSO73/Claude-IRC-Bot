@@ -26,13 +26,9 @@ export async function searchYoutube(query) {
     ?.primaryContents?.sectionListRenderer?.contents;
   if (!contents) return null;
 
-  let video = null;
-  for (const section of contents) {
-    const items = section?.itemSectionRenderer?.contents;
-    if (!items) continue;
-    video = items.find(i => i.videoRenderer);
-    if (video) break;
-  }
+  const video = contents
+    .flatMap(s => s?.itemSectionRenderer?.contents || [])
+    .find(i => i.videoRenderer);
   if (!video) return null;
 
   const r = video.videoRenderer;
@@ -60,9 +56,10 @@ export async function getVideoInfo(videoId) {
   const lengthSec = parseInt(pr?.videoDetails?.lengthSeconds, 10);
   let duration = '?';
   if (lengthSec > 0) {
-    const m = Math.floor(lengthSec / 60);
+    const h = Math.floor(lengthSec / 3600);
+    const m = Math.floor((lengthSec % 3600) / 60);
     const s = String(lengthSec % 60).padStart(2, '0');
-    duration = `${m}:${s}`;
+    duration = h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
   }
 
   return {

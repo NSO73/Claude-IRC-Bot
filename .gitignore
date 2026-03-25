@@ -1,23 +1,8 @@
-# Dependencies
 node_modules/
-
-# Environment & config
 .env
 config.json
-
-# Data
 data/
-
-# Projects
 projects/
-
-# Service (instance-specific)
 claude-irc-bot.service
-
-# Claude Code
-.claude/
-.claude.json
 CLAUDE.md
-
-# Claude Memory plugin
 .claude-mem/

@@ -13,7 +13,7 @@ function sliceByBytes(str, maxBytes) {
 }
 
 export function splitMessage(text, maxBytes = MAX_BYTES) {
-  const rawLines = text.split('\n');
+  const rawLines = text.replace(/\r/g, '').split('\n');
   const result = [];
   for (const line of rawLines) {
     if (line.trim() === '') continue;

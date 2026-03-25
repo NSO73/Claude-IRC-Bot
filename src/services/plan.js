@@ -11,13 +11,6 @@ function isExpired(plan) {
   return Date.now() - plan.createdAt > PLAN_TTL_MS;
 }
 
-export function hasPlan(nick) {
-  const plan = activePlans.get(nick);
-  if (!plan) return false;
-  if (isExpired(plan)) { activePlans.delete(nick); return false; }
-  return true;
-}
-
 export function getPlan(nick) {
   const plan = activePlans.get(nick);
   if (!plan) return null;
@@ -43,7 +36,6 @@ export function updatePlan(nick, newPlanText) {
   const plan = getPlan(nick);
   if (!plan) return null;
   plan.plan = newPlanText;
-  plan.createdAt = Date.now();
   return plan;
 }
 
@@ -56,9 +48,7 @@ export function pushContext(nick, role, content) {
   if (!plan) return;
   plan.createdAt = Date.now();
   plan.context.push({ role, content });
-  while (plan.context.length > 30) {
-    plan.context.splice(2, 2);
-  }
+  if (plan.context.length > 30) plan.context.splice(2, 2);
 }
 
 export function isGoMessage(message) {

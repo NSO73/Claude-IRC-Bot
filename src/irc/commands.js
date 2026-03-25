@@ -3,6 +3,26 @@ import { t } from '../lang/index.js';
 
 const startTime = Date.now();
 
+// --- Table-driven MODE commands ---
+
+const modeTable = {
+  ban:      { flag: '+b', mask: true,  usage: 'banUsage' },
+  unban:    { flag: '-b', mask: true,  usage: 'unbanUsage' },
+  mute:     { flag: '+q', mask: true,  usage: 'muteUsage' },
+  unmute:   { flag: '-q', mask: true,  usage: 'unmuteUsage' },
+  op:       { flag: '+o', usage: 'opUsage' },
+  deop:     { flag: '-o', usage: 'deopUsage' },
+  voice:    { flag: '+v', usage: 'voiceUsage' },
+  devoice:  { flag: '-v', usage: 'devoiceUsage' },
+};
+
+function handleMode(client, channel, args, { flag, mask, usage }) {
+  if (!args) return t(usage);
+  const target = args.split(' ')[0];
+  const modeTarget = mask && !target.includes('@') ? `${target}!*@*` : target;
+  client.raw(`MODE ${channel} ${flag} ${modeTarget}`);
+}
+
 // --- IRC commands ---
 
 const ircCommands = {
@@ -12,55 +32,12 @@ const ircCommands = {
     client.raw(`KICK ${channel} ${target} :${rest.join(' ') || t('kickDefault')}`);
   },
 
-  ban(client, channel, nick, args) {
-    if (!args) return t('banUsage');
-    const mask = args.includes('@') ? args : `${args}!*@*`;
-    client.raw(`MODE ${channel} +b ${mask}`);
-  },
-
-  unban(client, channel, nick, args) {
-    if (!args) return t('unbanUsage');
-    const mask = args.includes('@') ? args : `${args}!*@*`;
-    client.raw(`MODE ${channel} -b ${mask}`);
-  },
-
   kickban(client, channel, nick, args) {
-    const [target, ...rest] = args.split(' ');
+    const target = args.split(' ')[0];
     if (!target) return t('kickbanUsage');
-    client.raw(`MODE ${channel} +b ${target}!*@*`);
-    client.raw(`KICK ${channel} ${target} :${rest.join(' ') || t('kickDefault')}`);
-  },
-
-  mute(client, channel, nick, args) {
-    if (!args) return t('muteUsage');
-    const mask = args.includes('@') ? args : `${args}!*@*`;
-    client.raw(`MODE ${channel} +q ${mask}`);
-  },
-
-  unmute(client, channel, nick, args) {
-    if (!args) return t('unmuteUsage');
-    const mask = args.includes('@') ? args : `${args}!*@*`;
-    client.raw(`MODE ${channel} -q ${mask}`);
-  },
-
-  op(client, channel, nick, args) {
-    if (!args) return t('opUsage');
-    client.raw(`MODE ${channel} +o ${args.split(' ')[0]}`);
-  },
-
-  deop(client, channel, nick, args) {
-    if (!args) return t('deopUsage');
-    client.raw(`MODE ${channel} -o ${args.split(' ')[0]}`);
-  },
-
-  voice(client, channel, nick, args) {
-    if (!args) return t('voiceUsage');
-    client.raw(`MODE ${channel} +v ${args.split(' ')[0]}`);
-  },
-
-  devoice(client, channel, nick, args) {
-    if (!args) return t('devoiceUsage');
-    client.raw(`MODE ${channel} -v ${args.split(' ')[0]}`);
+    const banMask = target.includes('@') ? target : `${target}!*@*`;
+    client.raw(`MODE ${channel} +b ${banMask}`);
+    ircCommands.kick(client, channel, nick, args);
   },
 
   invite(client, channel, nick, args) {
@@ -71,22 +48,6 @@ const ircCommands = {
   topic(client, channel, nick, args) {
     if (!args) return t('topicUsage');
     client.raw(`TOPIC ${channel} :${args}`);
-  },
-
-  lock(client, channel) {
-    client.raw(`MODE ${channel} +i`);
-  },
-
-  unlock(client, channel) {
-    client.raw(`MODE ${channel} -i`);
-  },
-
-  moderate(client, channel) {
-    client.raw(`MODE ${channel} +m`);
-  },
-
-  unmoderate(client, channel) {
-    client.raw(`MODE ${channel} -m`);
   },
 
   seen(client, channel, nick, args) {
@@ -101,6 +62,7 @@ const ircCommands = {
   tell(client, channel, nick, args) {
     const [target, ...rest] = args.split(' ');
     if (!target || rest.length === 0) return t('tellUsage');
+    if (target.toLowerCase() === nick.toLowerCase()) return t('tellSelf');
     addTell(target, nick, rest.join(' '));
     return t('tellSaved', { nick: target });
   },
@@ -109,6 +71,20 @@ const ircCommands = {
     return t('uptime', { time: timeSince(new Date(startTime)) });
   },
 };
+
+// Table-driven toggle commands (no args)
+const toggleTable = {
+  lock: '+i', unlock: '-i',
+  moderate: '+m', unmoderate: '-m',
+};
+
+// Register table-driven commands
+for (const [name, spec] of Object.entries(modeTable)) {
+  ircCommands[name] = (client, channel, _nick, args) => handleMode(client, channel, args, spec);
+}
+for (const [name, flag] of Object.entries(toggleTable)) {
+  ircCommands[name] = (client, channel) => client.raw(`MODE ${channel} ${flag}`);
+}
 
 function sanitizeIrc(str) {
   return str.replace(/[\r\n]/g, '');
@@ -135,7 +111,7 @@ export function getHelp(topic) {
 // --- Utility ---
 
 function timeSince(date) {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
   if (seconds < 60) return t('timeSeconds', { n: seconds });
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return t('timeMinutes', { n: minutes });

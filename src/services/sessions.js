@@ -5,7 +5,7 @@ import { t } from '../lang/index.js';
 const PROJECTS_DIR = join(process.cwd(), 'projects');
 const MAX_PROMPT_LENGTH = 2000;
 
-if (!existsSync(PROJECTS_DIR)) {
+export function initSessions() {
   mkdirSync(PROJECTS_DIR, { recursive: true });
 }
 

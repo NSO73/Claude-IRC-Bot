@@ -46,6 +46,11 @@ export function initMemory() {
     }
     return rows;
   });
+
+  // Purge seen entries older than 90 days (daily)
+  stmts.purgeSeen = db.prepare(`DELETE FROM seen WHERE time < datetime('now', '-90 days')`);
+  stmts.purgeSeen.run();
+  setInterval(() => stmts.purgeSeen.run(), 86_400_000).unref();
 }
 
 // --- Seen (persistent) ---

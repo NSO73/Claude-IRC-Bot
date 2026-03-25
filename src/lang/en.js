@@ -5,6 +5,8 @@ export default {
   taskAborted: ({ id }) => `Task #${id} cancelled.`,
   error: ({ msg }) => `Error: ${msg}`,
   emptyReply: 'Empty response.',
+  cUsage: 'Usage: !c <question>',
+  ccUsage: 'Usage: !cc <question>',
 
   // Auth / Whoami
   authorized: 'authorized',
@@ -35,6 +37,8 @@ export default {
   planRefineHint: 'Say "go" to execute, or keep refining.',
   planGoHint: 'Say "go" to execute, or send feedback to refine.',
   planUsage: 'Usage: !plan <question> | /status /go /stop',
+  planSystemPropose: ({ question }) => `The user wants an action plan. Propose a clear, structured plan to address their request. Include the main steps, architecture or tool choices if relevant, and potential trade-offs. Do not start executing, only propose the plan. Question: ${question}`,
+  planSystemExec: ({ plan }) => `The plan has been approved. Execute it now concisely (IRC style). Here is the final plan:\n\n${plan}`,
   planHeader: ({ question }) => `Plan: ${question}`,
   planFooter: 'Say "go" to execute, or send feedback to refine the plan.',
 
@@ -51,6 +55,7 @@ export default {
   projectDeleteUsage: 'Usage: !project /delete <name>',
   projectDeleted: ({ name }) => `Project "${name}" deleted.`,
   projectNotFound: ({ name }) => `Project "${name}" not found.`,
+  projectMdEmpty: ({ name }) => `CLAUDE.md of "${name}" is empty.`,
   projectMdUpdated: ({ name }) => `CLAUDE.md of "${name}" updated.`,
   projectInvalidName: 'Invalid project name (letters, digits, hyphens, underscores, max 64).',
 
@@ -77,6 +82,7 @@ export default {
   seenNever: ({ nick }) => `${nick}: never seen.`,
   seenResult: ({ nick, ago, channel, msg }) => `${nick} seen ${ago} ago on ${channel}: "${msg}"`,
   tellUsage: 'Usage: !tell <nick> <message>',
+  tellSelf: 'You can\'t leave a message for yourself.',
   tellSaved: ({ nick }) => `Message saved for ${nick}.`,
 
   // Uptime
@@ -88,10 +94,40 @@ export default {
   timeHours: ({ h, m }) => `${h}h${m}`,
   timeDays: ({ d, h }) => `${d}d ${h}h`,
 
+  // Context labels (prompts to Claude)
+  contextLabelUser: 'User',
+  contextLabelAssistant: 'Assistant',
+
   // Sessions
   sessionInvalidName: 'Invalid project name',
   sessionTemplate: ({ name }) => `# Project: ${name}\n\nProject session for IRC channel.\n`,
   sessionTooLong: ({ max }) => `Content too long (max ${max} characters)`,
+
+  // UI
+  uiUsage: 'Usage: !ui <prototype description>',
+  uiDesignSystemIntro: ({ ds }) => `Generated design system:\n\n${ds}\n\n---\n\n`,
+  uiBuildInstructions: ({ pasteMode, question }) => {
+    const lines = [
+      'The design system above has already been generated. Do NOT execute any search commands. Generate the code directly.',
+      '',
+      'Generate a complete, self-contained HTML page for the request below.',
+      '- All CSS in <style> tags, all JS in <script> tags',
+    ];
+    if (pasteMode === 'html') {
+      lines.push('- For fonts, use <link rel="stylesheet" href="assets/vendor/fonts.css"> (Inter + JetBrains Mono available)');
+      lines.push('- Also include <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">');
+    } else {
+      lines.push('- For fonts, use Google Fonts via <link> in the <head>');
+    }
+    lines.push(
+      '- Professional, modern design, responsive, dark mode',
+      '- Clean JS: no variable redeclarations, no duplicated code, use named functions',
+      '- Return ONLY raw HTML code, no markdown blocks or explanations',
+      '',
+      `Request: ${question}`,
+    );
+    return lines.join('\n');
+  },
 
   // Web
   githubTokenMissing: 'GITHUB_TOKEN not configured',
@@ -103,7 +139,7 @@ export default {
     'Claude: !c (Sonnet) | !cc (Opus)',
     'Project: !project <name> | /list /leave /delete /md',
     'Plan: !plan <question> | /status /go /stop',
-    'Tools: !seen !tell !yt !uptime !whoami !tasks !stop',
+    'Tools: !seen !tell !yt !ui !uptime !whoami !tasks !stop',
     'IRC: !kick !ban !unban !kickban !mute !unmute !op !deop !voice !devoice !invite !topic !lock !unlock !moderate !unmoderate',
     '!help <command> for details',
   ],
@@ -134,6 +170,7 @@ export default {
   help_whoami: ['!whoami — Show your NickServ account and access level'],
   help_tasks: ['!tasks — List active Claude requests with their ID'],
   help_stop: ['!stop <id> — Cancel a running request by ID'],
+  help_ui: ['!ui <description> — Generate an HTML prototype (design system + Claude Opus)'],
   help_restart: ['!restart — Restart the bot (admin)'],
   help_help: ['!help [command] — Show general help or command details'],
   help_kick: ['!kick <nick> [reason] — Kick a user from the channel'],

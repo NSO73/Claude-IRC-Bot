@@ -9,12 +9,13 @@ Ask questions, run plans, manage projects -- all from your IRC channel.
 
 | | |
 |---|---|
-| 💬 **Chat** | `!c` (Sonnet) / `!cc` (Opus), inline model override, nick mention |
+| 💬 **Chat** | `!c` (Sonnet, 5 turns) / `!cc` (Opus, 10 turns) with full tool access |
+| 🎨 **UI Prototyping** | `!ui` generates HTML prototypes via design system + Claude Opus |
 | 📋 **Plan Mode** | Propose, refine, and execute multi-step plans interactively |
 | 📁 **Projects** | Isolated work contexts with per-project CLAUDE.md |
 | 🧠 **Memory** | Persistent context across sessions via claude-mem |
 | 🛡️ **Moderation** | kick, ban, mute, op, voice, topic, lock, moderate... |
-| 📎 **Paste** | Long responses auto-uploaded as private GitHub Gists |
+| 📎 **Paste** | Long responses auto-pasted as styled HTML pages or GitHub Gists |
 | 🔐 **Auth** | Nick whitelist + NickServ verification (WHOIS) |
 | ⚡ **Concurrency** | Parallel requests per user, cancellable via `!stop` |
 
@@ -24,7 +25,7 @@ Ask questions, run plans, manage projects -- all from your IRC channel.
 
 ### Prerequisites
 
-- Node.js >= 18
+- Node.js >= 22
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
 - A NickServ account (for SASL)
 
@@ -70,7 +71,7 @@ sudo systemctl enable --now claude-irc-bot
 SASL_ACCOUNT=myaccount
 SASL_PASSWORD=mypassword
 CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
-GITHUB_TOKEN=github_pat_...       # optional, for Gist pastes
+GITHUB_TOKEN=github_pat_...       # optional, for Gist paste mode
 ```
 
 ### `config.json`
@@ -85,10 +86,19 @@ GITHUB_TOKEN=github_pat_...       # optional, for Gist pastes
 | `irc` | `autoReconnect` | Auto-reconnect | `true` |
 | `claude` | `model` | Default model (`sonnet` / `opus`) | `sonnet` |
 | `claude` | `maxConcurrentPerUser` | Max concurrent requests per user | `3` |
+| `claude` | `queryTimeout` | Timeout for Claude requests (ms) | `300000` |
+| `claude` | `uiTimeout` | Timeout for `!ui` requests (ms) | `1200000` |
 | `auth` | `allowedNicks` | Allowed NickServ nicks/accounts | `[]` |
 | `auth` | `requireIdentified` | Require NickServ identification | `true` |
 | `auth` | `denyMessage` | Denial message (empty = silent) | `""` |
-| `paste` | `threshold` | Lines before Gist upload | `20` |
+| `paste` | `mode` | `gist` (GitHub Gist) or `html` (local HTML files) | `gist` |
+| `paste` | `threshold` | Lines before paste upload | `20` |
+| `paste` | `dir` | Directory for HTML paste files (html mode) | `data/pastes` |
+| `paste` | `baseUrl` | Public URL serving that directory (html mode) | |
+
+**Paste modes:**
+- **`gist`** — Uploads to GitHub Gist. Requires `GITHUB_TOKEN` in `.env`.
+- **`html`** — Saves styled HTML files to `dir`. Requires a web server (nginx, caddy...) serving that directory at `baseUrl`.
 
 ---
 
@@ -100,8 +110,8 @@ GITHUB_TOKEN=github_pat_...       # optional, for Gist pastes
 
 | Command | Description |
 |---------|-------------|
-| `!c <question>` | Ask Claude (Sonnet) |
-| `!cc <question>` | Ask Claude (Opus) |
+| `!c <question>` | Ask Claude (Sonnet) -- 5 turns, tools enabled |
+| `!cc <question>` | Ask Claude (Opus) -- 10 turns, tools enabled |
 | `BotNick: <question>` | Mention the bot nick = `!c` |
 
 ### 📋 Plan
@@ -127,6 +137,14 @@ GITHUB_TOKEN=github_pat_...       # optional, for Gist pastes
 | `!project /delete <name>` | Delete a project |
 | `!project /md` | Show the project's CLAUDE.md |
 | `!project /md <text>` | Edit the CLAUDE.md (max 2000 chars) |
+
+### 🎨 UI Prototyping
+
+| Command | Description |
+|---------|-------------|
+| `!ui <description>` | Generate an HTML prototype (design system + Claude Opus) |
+
+Uses the ui-ux-pro-max skill with a built-in design system. The generated page is published as an HTML paste.
 
 ### 🔨 Utilities
 
@@ -160,13 +178,17 @@ src/
     splitter.js         -- Long message splitting for IRC (390 bytes/line)
   services/
     auth.js             -- WHOIS/NickServ auth with differentiated cache
-    claude.js           -- Claude Agent SDK interface (query, model parsing)
+    claude.js           -- Claude Agent SDK interface (query, model parsing, tool capture)
     memory.js           -- SQLite database (seen, tell) via better-sqlite3
-    paste.js            -- Paste upload via GitHub Gist API
+    paste.js            -- Paste service (HTML pages or GitHub Gist)
     plan.js             -- Plan mode (create, iterate, execute)
     sessions.js         -- Project management (CLAUDE.md, isolated directories)
     tasks.js            -- Concurrent task registry
+    ui.js               -- UI prototyping (skill loader, design system, HTML extraction)
     youtube.js          -- YouTube search + video info extraction
+  templates/
+    paste.html            -- HTML paste template
+    assets/               -- Shared CSS & JS for paste pages (copied to paste dir)
   lang/
     index.js, fr.js, en.js -- Internationalization
 ```
@@ -174,6 +196,7 @@ src/
 ## 💾 Persistent Data
 
 - `data/memory.db` -- SQLite in WAL mode (seen, tells)
+- `data/pastes/` -- Generated HTML paste files (html mode)
 - `projects/<name>/CLAUDE.md` -- Per-project system prompt
 
 ---

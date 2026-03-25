@@ -16,7 +16,8 @@
   "claude": {
     "model": "sonnet",
     "maxConcurrentPerUser": 3,
-    "queryTimeout": 300000
+    "queryTimeout": 300000,
+    "uiTimeout": 1200000
   },
   "auth": {
     "allowedNicks": ["yournick"],
@@ -24,6 +25,9 @@
     "denyMessage": ""
   },
   "paste": {
-    "threshold": 20
+    "mode": "gist",
+    "threshold": 20,
+    "dir": "data/pastes",
+    "baseUrl": "https://paste.example.com"
   }
 }

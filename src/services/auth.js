@@ -3,7 +3,23 @@ const CACHE_TTL_OK_MS = 120000;
 const CACHE_TTL_DENY_MS = 10000;
 const authCache = new Map();
 
-export function checkAuth(client, nick, allowedNicks, requireIdentified) {
+let allowedSet = new Set();
+let requireId = false;
+
+export function initAuth(authConfig) {
+  allowedSet = new Set((authConfig.allowedNicks || []).map(n => n.toLowerCase()));
+  requireId = !!authConfig.requireIdentified;
+
+  // Periodic cache purge
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of authCache) {
+      if (v.expiry <= now) authCache.delete(k);
+    }
+  }, 300_000).unref();
+}
+
+export function checkAuth(client, nick) {
   const nickLower = nick.toLowerCase();
 
   const cached = authCache.get(nickLower);
@@ -21,9 +37,8 @@ export function checkAuth(client, nick, allowedNicks, requireIdentified) {
       resolve(result);
     }
 
-    const inWhitelist = allowedNicks.some(a => a.toLowerCase() === nickLower);
-    if (!inWhitelist) return done({ authorized: false, reason: 'not_whitelisted', account: null });
-    if (!requireIdentified) return done({ authorized: true, reason: 'ok', account: null });
+    if (!allowedSet.has(nickLower)) return done({ authorized: false, reason: 'not_whitelisted', account: null });
+    if (!requireId) return done({ authorized: true, reason: 'ok', account: null });
 
     const timeout = setTimeout(() => {
       done({ authorized: false, reason: 'whois_timeout', account: null });
@@ -35,9 +50,7 @@ export function checkAuth(client, nick, allowedNicks, requireIdentified) {
       if (!account) {
         return done({ authorized: false, reason: 'not_identified', account: null });
       }
-      const accountMatch = allowedNicks.some(
-        a => a.toLowerCase() === account.toLowerCase()
-      );
+      const accountMatch = allowedSet.has(account.toLowerCase());
       done({
         authorized: accountMatch,
         reason: accountMatch ? 'ok' : 'account_mismatch',
